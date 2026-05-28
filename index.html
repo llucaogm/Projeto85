@@ -167,74 +167,137 @@ document.addEventListener('DOMContentLoaded', async function() {
 
   </script>
 
-  <!-- ── QUERIDÔMETRO SUPABASE ─────────────────────────────────────── -->
+  <!-- ── SUPABASE: QUERIDÔMETRO + DESAFIOS ── -->
   <script>
-  (function() {
+  (function () {
     var SUPA_URL = 'https://tyazqnpveylqpdmheavv.supabase.co';
     var SUPA_KEY = 'sb_publishable_BAsgFJV9QbF360hRUNNKZw_NBi_kaei';
     var TIPOS = ['torce', 'duvida', 'admira'];
 
-    function injetarSupabase() {
-      // Carrega SDK do Supabase via CDN
-      var s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js';
-      s.onload = function() {
-        var client = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+    function esc(str) {
+      return String(str || '')
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
 
-        // Carrega contagens reais do banco
-        async function carregarContagens() {
-          var resp = await client.from('votos').select('tipo, total');
-          if (resp.data) {
-            resp.data.forEach(function(row) {
-              var el = document.getElementById('n-' + row.tipo);
-              if (el) el.textContent = row.total;
-            });
-          }
-        }
+    function iniciar(client) {
 
-        // Marca botão já votado se localStorage tiver registro
-        function marcarVotado() {
-          var votou = localStorage.getItem('p85_votou');
-          if (!votou) return;
-          TIPOS.forEach(function(t) {
-            var btn = document.getElementById('q-' + t);
-            if (btn) { btn.disabled = true; }
-          });
-          var btnVotado = document.getElementById('q-' + votou);
-          if (btnVotado) btnVotado.classList.add('votado');
-        }
+      /* ══ QUERIDÔMETRO ══ */
+      async function carregarVotos() {
+        var r = await client.from('votos').select('tipo, total');
+        if (r.data) r.data.forEach(function (row) {
+          var el = document.getElementById('n-' + row.tipo);
+          if (el) el.textContent = row.total;
+        });
+      }
 
-        // Substitui a função global votar() pela versão com Supabase
-        window.votar = async function(tipo) {
-          if (localStorage.getItem('p85_votou')) return;
-          localStorage.setItem('p85_votou', tipo);
+      function marcarVotado() {
+        var votou = localStorage.getItem('p85_votou');
+        if (!votou) return;
+        TIPOS.forEach(function (t) {
+          var b = document.getElementById('q-' + t);
+          if (b) b.disabled = true;
+        });
+        var bv = document.getElementById('q-' + votou);
+        if (bv) bv.classList.add('votado');
+      }
 
-          // Incrementa no banco
-          await client.rpc('incrementar_voto', { tipo_voto: tipo });
-
-          // Atualiza UI
-          await carregarContagens();
-          marcarVotado();
-        };
-
-        carregarContagens();
+      window.votar = async function (tipo) {
+        if (localStorage.getItem('p85_votou')) return;
+        localStorage.setItem('p85_votou', tipo);
+        await client.rpc('incrementar_voto', { tipo_voto: tipo });
+        await carregarVotos();
         marcarVotado();
       };
-      document.head.appendChild(s);
-    }
 
-    // Aguarda o bundle terminar de renderizar (polling pelo elemento do Queridômetro)
-    function aguardarElementos() {
-      if (document.getElementById('q-torce')) {
-        injetarSupabase();
-      } else {
-        setTimeout(aguardarElementos, 200);
+      carregarVotos();
+      marcarVotado();
+
+      /* ══ DESAFIOS — LISTA ══ */
+      var STATUS = {
+        aceito:    { cls: 'badge-aceito',    label: 'Aceito' },
+        andamento: { cls: 'badge-andamento', label: 'Em andamento' },
+        recusado:  { cls: 'badge-recusado',  label: 'Recusado' },
+        concluido: { cls: 'badge-concluido', label: 'Concluido' },
+      };
+
+      async function carregarDesafios() {
+        var r = await client
+          .from('desafios')
+          .select('id, nome, texto, status')
+          .neq('status', 'pendente')
+          .order('created_at', { ascending: false });
+
+        var lista = document.getElementById('desafiosList');
+        if (!lista) return;
+
+        if (!r.data || r.data.length === 0) {
+          lista.innerHTML =
+            '<p style="color:var(--cafe,#8B5E3C);font-size:14px;padding:16px 0">' +
+            'Nenhum desafio ainda. Seja o primeiro la embaixo.</p>';
+          return;
+        }
+
+        lista.innerHTML = r.data.map(function (d) {
+          var s = STATUS[d.status] || { cls: 'badge-aceito', label: d.status };
+          return '<div class="desafio">' +
+            '<div class="desafio-topo">' +
+            '<p class="desafio-txt">' + esc(d.texto) + '</p>' +
+            '<span class="badge ' + s.cls + '">' + s.label + '</span>' +
+            '</div>' +
+            '<p class="desafio-autor">por ' + esc(d.nome) + '</p>' +
+            '</div>';
+        }).join('');
       }
+
+      carregarDesafios();
+
+      /* ══ DESAFIOS — FORMULÁRIO ══ */
+      window.enviar = async function (e) {
+        e.preventDefault();
+        var nome  = (document.getElementById('inp-nome')    || {}).value || '';
+        var texto = (document.getElementById('inp-desafio') || {}).value || '';
+        nome  = nome.trim();
+        texto = texto.trim();
+        if (!nome || !texto) return;
+
+        var btn = document.querySelector('#formDesafio button[type="submit"]');
+        if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+
+        var r = await client.from('desafios')
+          .insert({ nome: nome, texto: texto, status: 'pendente' });
+
+        if (!r.error) {
+          var form = document.getElementById('formDesafio');
+          var ok   = document.getElementById('js-form-ok');
+          if (form) form.style.display = 'none';
+          if (ok)   ok.style.display   = 'block';
+        } else {
+          if (btn) { btn.disabled = false; btn.textContent = 'Mandar desafio'; }
+        }
+      };
     }
 
-    // Começa a verificar após o DOMContentLoaded do bundle
-    document.addEventListener('DOMContentLoaded', function() {
-      setTimeout(aguardarElementos, 300);
+    /* ══ BOOTSTRAP ══ */
+    function carregar() {
+      var sdk = document.createElement('script');
+      sdk.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js';
+      sdk.onload = function () {
+        iniciar(window.supabase.createClient(SUPA_URL, SUPA_KEY));
+      };
+      document.head.appendChild(sdk);
+    }
+
+    function aguardar() {
+      var pronto = document.getElementById('q-torce') ||
+                   document.getElementById('desafiosList') ||
+                   document.getElementById('formDesafio');
+      if (pronto) { carregar(); }
+      else        { setTimeout(aguardar, 200); }
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+      setTimeout(aguardar, 300);
     });
   })();
   </script>
